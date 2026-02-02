@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>シフト管理ダッシュボード</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Firebase SDK の追加 -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <!-- ヘッダーセクション -->
+        <header class="header-section">
+            <div class="title-group">
+                <h1 id="main-title">シフト表</h1>
+                <p>Team Schedule Management System</p>
+            </div>
+            <div class="work-time-card">
+                <h3>就業時間</h3>
+                <div class="time-row"><span>早番</span> 07:00 〜 17:30</div>
+                <div class="time-row"><span>中番</span> 08:30 〜 17:30</div>
+            </div>
+        </header>
+
+        <!-- シフトテーブルセクション -->
+        <div class="table-wrapper">
+            <table class="shift-table">
+                <thead>
+                    <tr>
+                        <th width="20%">日付</th>
+                        <th width="20%">◆ 昼(早番)</th>
+                        <th width="20%">♣ 昼(遅)</th>
+                        <th width="20%">通常シフト</th>
+                        <th width="20%">備考</th>
+                    </tr>
+                </thead>
+                <tbody id="shift-tbody">
+                    <!-- Firebaseからデータを取得して生成 -->
+                </tbody>
+            </table>
+        </div>
+
+        <!-- メンバー管理セクション -->
+        <section class="member-manager">
+            <h3>メンバー管理</h3>
+            <div id="member-list" class="member-list">
+                <!-- JavaScriptで生成 -->
+            </div>
+            <div class="add-member-form">
+                <input type="text" id="new-member-name" class="add-input" placeholder="新しい名前を入力...">
+                <button onclick="addMember()" class="btn-add">追加</button>
+                <button onclick="resetAllOverrides()" class="btn-reset" title="すべての手動変更を消去して自動計算に戻します">自動計算に戻す</button>
+            </div>
+        </section>
+
+        <!-- フッターセクション -->
+        <footer class="footer-info">
+            <div class="break-legend">
+                <div class="legend-item">
+                    <div class="mini-badge badge-early">◆</div>
+                    <div><strong>時間差昼休憩:</strong> 11:30 〜 12:30</div>
+                </div>
+                <div class="legend-item">
+                    <div class="mini-badge badge-late">♣</div>
+                    <div><strong>時間差昼休憩:</strong> 12:30 〜 13:30</div>
+                </div>
+            </div>
+            <div class="sort-note">
+                ※ 順不同（あいうお順）
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // --- Firebase 設定 (ここにあなたの情報を貼り付けてください) ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyBHw9a4RSsGXUV4LK93cX4nfyDSLibeiH8",
+            authDomain: "shift-table-427cd.firebaseapp.com",
+            databaseURL: "https://shift-table-427cd-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "shift-table-427cd",
+            storageBucket: "shift-table-427cd.firebasestorage.app",
+            messagingSenderId: "331317417060",
+            appId: "1:331317417060:web:0af3960ebe56ff0ea3b71"
+        };
+        // -----------------------------------------------------------
+
+        // Firebase初期化 (設定が YOUR_API_KEY のままでもエラーで止まらないようにガード)
+        if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                const database = firebase.database();
+
+                // Firebase データの監視
+                database.ref('shift_data').on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        if (data.members) names = data.members;
+                        overrides = data.overrides || {};
+                        renderMembers(); // サーバーのデータで上書き描画
+                    } else {
+                        // サーバーにデータがない場合は現在のローカル状態で初期化保存
+                        saveAllData();
+                    }
+                });
+            } catch (e) {
+                console.error("Firebaseの初期化に失敗しました。設定を確認してください。", e);
+            }
+        } else {
+            console.warn("Firebaseの設定が未完了です。現在はローカルモードで動作しています。");
+        }
+
+        // 設定の初期値
+        const DEFAULT_NAMES = ["西岡", "滝沢", "臼井", "村田", "今枝", "大竹"];
+        let names = [...DEFAULT_NAMES];
+        let overrides = {};
+
+        const baseDate = new Date("2026-02-02");
+        const baseEarlyIndex = 5;
+
+        // 初回描画 (Firebaseからの返答を待たずに即座に表示)
+        renderMembers();
+
+        // データの保存（Firebaseへ）
+        function saveAllData() {
+            if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                firebase.database().ref('shift_data').set({
+                    members: names,
+                    overrides: overrides
+                });
+            }
+        }
+
+        // メンバー一覧の描画
+        function renderMembers() {
+            const list = document.getElementById('member-list');
+            list.innerHTML = names.map((name, index) => `
+                <div class="member-chip">
+                    ${name}
+                    <span class="delete-btn" onclick="deleteMember(${index})">×</span>
+                </div>
+            `).join('');
+
+            generateTable();
+        }
+
+        function addMember() {
+            const input = document.getElementById('new-member-name');
+            const name = input.value.trim();
+            if (name && !names.includes(name)) {
+                names.push(name);
+                input.value = '';
+                saveAllData();
+            }
+        }
+
+        function deleteMember(index) {
+            if (names.length <= 2) {
+                alert("シフト作成には最低2名のメンバーが必要です。");
+                return;
+            }
+            if (confirm(`「${names[index]}」を削除しますか？`)) {
+                names.splice(index, 1);
+                saveAllData();
+            }
+        }
+
+        function saveRowState(weekId) {
+            const row = document.querySelector(`tr[data-week-id="${weekId}"]`);
+            if (!row) return;
+
+            overrides[weekId] = {
+                date: row.querySelector('.editable-date').value,
+                early: row.querySelectorAll('.name-select')[0].value,
+                late: row.querySelectorAll('.name-select')[1].value,
+                normal: row.querySelectorAll('.staff-all-input')[0].value,
+                notes: row.querySelectorAll('.staff-all-input')[1].value
+            };
+            saveAllData();
+        }
+
+        function resetAllOverrides() {
+            if (confirm("すべての手動変更を削除して、プログラムの自動計算シフトに戻しますか？")) {
+                overrides = {};
+                saveAllData();
+            }
+        }
+
+        // --- シフト計算ロジック (継続) ---
+        function isJapaneseHoliday(date) {
+            const y = date.getFullYear();
+            const m = date.getMonth() + 1;
+            const d = date.getDate();
+            const w = date.getDay();
+
+            if (m === 1 && d === 1) return true;
+            if (m === 2 && d === 11) return true;
+            if (m === 2 && d === 23) return true;
+            if (m === 4 && d === 29) return true;
+            if (m === 5 && d === 3) return true;
+            if (m === 5 && d === 4) return true;
+            if (m === 5 && d === 5) return true;
+            if (m === 8 && d === 11) return true;
+            if (m === 11 && d === 3) return true;
+            if (m === 11 && d === 23) return true;
+
+            const springEquinox = Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+            const autumnEquinox = Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+            if (m === 3 && d === springEquinox) return true;
+            if (m === 9 && d === autumnEquinox) return true;
+
+            const getNthMonday = (year, month, n) => {
+                let count = 0;
+                for (let day = 1; day <= 31; day++) {
+                    if (new Date(year, month - 1, day).getDay() === 1) {
+                        count++;
+                        if (count === n) return day;
+                    }
+                }
+                return 0;
+            };
+
+            if (m === 1 && d === getNthMonday(y, 1, 2)) return true;
+            if (m === 7 && d === getNthMonday(y, 7, 3)) return true;
+            if (m === 9 && d === getNthMonday(y, 9, 3)) return true;
+            if (m === 10 && d === getNthMonday(y, 10, 2)) return true;
+
+            if (w === 1) {
+                const yesterday = new Date(y, m - 1, d - 1);
+                if (yesterday.getDay() === 0 && isJapaneseHoliday(yesterday)) return true;
+            }
+
+            const keiroNoHi = getNthMonday(y, 9, 3);
+            if (m === 9 && d === keiroNoHi + 1 && keiroNoHi !== 0 && autumnEquinox === keiroNoHi + 2) return true;
+
+            return false;
+        }
+
+        function getMondayOfCurrentWeek(d) {
+            const day = d.getDay();
+            const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+            const monday = new Date(d.getFullYear(), d.getMonth(), diff);
+            monday.setHours(0, 0, 0, 0);
+            return monday;
+        }
+
+        function formatDate(date, isFirstRow) {
+            const y = date.getFullYear();
+            const m = date.getMonth() + 1;
+            const d = date.getDate();
+            const dayNames = ["日", "月", "火", "水", "木", "金", "土"];
+            const day = dayNames[date.getDay()];
+            if (m === 1 || (isFirstRow)) return `${y}/${m}/${d} (${day})`;
+            return `${m}/${d} (${day})`;
+        }
+
+        function generateTable() {
+            const tbody = document.getElementById('shift-tbody');
+            const today = new Date();
+            const currentMonday = getMondayOfCurrentWeek(today);
+
+            const diffTime = currentMonday.getTime() - baseDate.getTime();
+            const diffWeeks = Math.round(diffTime / (7 * 24 * 60 * 60 * 1000));
+
+            let tableHTML = '';
+            let startMonth = "";
+            let endMonth = "";
+
+            const nameOptions = (selectedName) => {
+                return names.map((name) =>
+                    `<option value="${name}" ${name === selectedName ? 'selected' : ''}>${name}</option>`
+                ).join('');
+            };
+
+            for (let i = 0; i < 5; i++) {
+                const weekStartDate = new Date(currentMonday);
+                weekStartDate.setDate(currentMonday.getDate() + (i * 7));
+                const weekId = weekStartDate.toISOString().split('T')[0];
+
+                const displayWeekDate = new Date(weekStartDate);
+                if (isJapaneseHoliday(displayWeekDate)) {
+                    displayWeekDate.setDate(displayWeekDate.getDate() + 1);
+                }
+
+                const earlyIdx = (baseEarlyIndex + diffWeeks + i) % names.length;
+                const lateIdx = (earlyIdx + 1) % names.length;
+
+                const rowData = overrides[weekId] || {
+                    date: formatDate(displayWeekDate, i === 0) + " 〜",
+                    early: names[earlyIdx],
+                    late: (names.length > 1 ? names[lateIdx] : names[0]),
+                    normal: "すべて全員",
+                    notes: ""
+                };
+
+                if (i === 0) startMonth = (displayWeekDate.getMonth() + 1) + "月";
+                if (i === 4) endMonth = (displayWeekDate.getMonth() + 1) + "月";
+
+                tableHTML += `
+                    <tr data-week-id="${weekId}">
+                        <td>
+                            <input type="text" class="editable-date" value="${rowData.date}" oninput="saveRowState('${weekId}')">
+                        </td>
+                        <td>
+                            <span class="badge badge-early">
+                                <span class="icon">◆</span>
+                                <select class="name-select" onchange="saveRowState('${weekId}')">
+                                    ${nameOptions(rowData.early)}
+                                </select>
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge badge-late">
+                                <span class="icon">♣</span>
+                                <select class="name-select" onchange="saveRowState('${weekId}')">
+                                    ${nameOptions(rowData.late)}
+                                </select>
+                            </span>
+                        </td>
+                        <td>
+                            <div class="staff-all">
+                                <input type="text" class="staff-all-input" value="${rowData.normal}" oninput="saveRowState('${weekId}')">
+                            </div>
+                        </td>
+                        <td>
+                            <input type="text" class="staff-all-input" placeholder="備考を入力..." value="${rowData.notes}" oninput="saveRowState('${weekId}')">
+                        </td>
+                    </tr>
+                `;
+            }
+
+            tbody.innerHTML = tableHTML;
+            document.getElementById('main-title').innerText = `${startMonth} 〜 ${endMonth} シフト表`;
+        }
+    </script>
+</body>
+
+</html>
