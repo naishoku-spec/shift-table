@@ -114,12 +114,12 @@
         }
 
         // 設定の初期値
-        const DEFAULT_NAMES = ["西岡", "滝沢", "臼井", "村田", "今枝", "大竹"];
+        const DEFAULT_NAMES = ["大竹", "西岡", "滝沢", "臼井", "村田", "今枝"];
         let names = [...DEFAULT_NAMES];
         let overrides = {};
 
         const baseDate = new Date("2026-02-02");
-        const baseEarlyIndex = 5;
+        const baseEarlyIndex = 0;
 
         // 初回描画 (Firebaseからの返答を待たずに即座に表示)
         renderMembers();
