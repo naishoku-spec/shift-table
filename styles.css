@@ -311,6 +311,42 @@ body {
     font-weight: 600;
     font-size: 14px;
     border: 1px solid var(--border-color);
+    cursor: grab;
+    user-select: none;
+    transition: all 0.2s ease;
+}
+
+.member-chip:hover {
+    background: #e2e8f0;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.member-chip:active {
+    cursor: grabbing;
+}
+
+.member-chip.dragging {
+    opacity: 0.4;
+    transform: scale(0.95);
+}
+
+.member-chip.drag-over {
+    background: var(--primary-light);
+    border-color: var(--primary);
+    transform: scale(1.05);
+}
+
+.drag-handle {
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: grab;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.member-chip:hover .drag-handle {
+    opacity: 1;
 }
 
 .delete-btn {

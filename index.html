@@ -46,14 +46,15 @@
 
         <!-- メンバー管理セクション -->
         <section class="member-manager">
-            <h3>メンバー管理</h3>
+            <h3>メンバー管理 <small style="font-weight: normal; color: #888;">（ドラッグで順番変更）</small></h3>
             <div id="member-list" class="member-list">
                 <!-- JavaScriptで生成 -->
             </div>
             <div class="add-member-form">
                 <input type="text" id="new-member-name" class="add-input" placeholder="新しい名前を入力...">
                 <button onclick="addMember()" class="btn-add">追加</button>
-                <button onclick="resetAllOverrides()" class="btn-reset" title="すべての手動変更を消去して自動計算に戻します">自動計算に戻す</button>
+                <button onclick="resetToDefaultOrder()" class="btn-reset"
+                    title="現在のメンバー管理の順番でシフトを自動計算し直します">自動計算に戻す</button>
             </div>
         </section>
 
@@ -113,12 +114,14 @@
             console.warn("Firebaseの設定が未完了です。現在はローカルモードで動作しています。");
         }
 
-        // 設定の初期値
-        const DEFAULT_NAMES = ["大竹", "西岡", "滝沢", "臼井", "村田", "今枝"];
+        // 設定の初期値 (画像の順番に合わせる: 西岡, 滝沢, 大竹, 臼井, 村田, 今枝)
+        const DEFAULT_NAMES = ["西岡", "滝沢", "大竹", "臼井", "村田", "今枝"];
         let names = [...DEFAULT_NAMES];
         let overrides = {};
 
-        const baseDate = new Date("2026-02-02");
+        // ローテーションの起点となる月曜日
+        // 2026-02-09 (今週の月曜) を起点にすることで、names[0] が今週の担当になります
+        const baseDate = new Date("2026-02-09");
         const baseEarlyIndex = 0;
 
         // 初回描画 (Firebaseからの返答を待たずに即座に表示)
@@ -134,17 +137,100 @@
             }
         }
 
+        // ドラッグ&ドロップ関連
+        let draggedElement = null;
+        let draggedIndex = null;
+
         // メンバー一覧の描画
         function renderMembers() {
             const list = document.getElementById('member-list');
             list.innerHTML = names.map((name, index) => `
-                <div class="member-chip">
+                <div class="member-chip" draggable="true" data-index="${index}">
+                    <span class="drag-handle">☰</span>
                     ${name}
                     <span class="delete-btn" onclick="deleteMember(${index})">×</span>
                 </div>
             `).join('');
 
+            // ドラッグ&ドロップイベントを設定
+            setupDragAndDrop();
             generateTable();
+        }
+
+        function setupDragAndDrop() {
+            const chips = document.querySelectorAll('.member-chip');
+
+            chips.forEach(chip => {
+                chip.addEventListener('dragstart', handleDragStart);
+                chip.addEventListener('dragend', handleDragEnd);
+                chip.addEventListener('dragover', handleDragOver);
+                chip.addEventListener('drop', handleDrop);
+                chip.addEventListener('dragenter', handleDragEnter);
+                chip.addEventListener('dragleave', handleDragLeave);
+            });
+        }
+
+        function handleDragStart(e) {
+            draggedElement = this;
+            draggedIndex = parseInt(this.dataset.index);
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragEnd(e) {
+            this.classList.remove('dragging');
+            document.querySelectorAll('.member-chip').forEach(chip => {
+                chip.classList.remove('drag-over');
+            });
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+        }
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            if (this !== draggedElement) {
+                this.classList.add('drag-over');
+            }
+        }
+
+        function handleDragLeave(e) {
+            this.classList.remove('drag-over');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            const targetIndex = parseInt(this.dataset.index);
+
+            if (draggedIndex !== targetIndex) {
+                // 配列内で要素を移動
+                const movedName = names.splice(draggedIndex, 1)[0];
+                names.splice(targetIndex, 0, movedName);
+
+                // 順番が変わったので自動計算を優先するためにoverridesをクリア（任意）
+                // ユーザーは「メンバー管理の順番で組みたい」とのことなので、
+                // 移動させた場合は自動計算を再適用するのが直感的です
+                overrides = {};
+                saveAllData();
+            }
+
+            this.classList.remove('drag-over');
+        }
+
+        // シフトを現在の「メンバー管理」の順番に基づいて自動計算し直す
+        function resetToDefaultOrder() {
+            if (confirm("手動で変更したシフトをすべてリセットし、現在の「メンバー管理」の順番で今週から自動計算し直しますか？")) {
+                const today = new Date();
+                const monday = getMondayOfCurrentWeek(today);
+
+                // 起点を今週の月曜日に更新することで、一番上の人が今週の担当になります
+                baseDate.setTime(monday.getTime());
+
+                overrides = {};
+                saveAllData();
+            }
         }
 
         function addMember() {
@@ -180,13 +266,6 @@
                 notes: row.querySelectorAll('.staff-all-input')[1].value
             };
             saveAllData();
-        }
-
-        function resetAllOverrides() {
-            if (confirm("すべての手動変更を削除して、プログラムの自動計算シフトに戻しますか？")) {
-                overrides = {};
-                saveAllData();
-            }
         }
 
         // --- シフト計算ロジック (継続) ---
