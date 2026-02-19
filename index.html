@@ -89,46 +89,14 @@
         };
         // -----------------------------------------------------------
 
-        // --- セキュリティ設定（合言葉） ---
+        // --- セキュリティ・保存先設定 ---
+        const isLocal = window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1" ||
+            window.location.protocol === "file:";
+
         const SECRET_PATH = "shift-ontmi-7709-table-17493";
 
-        // Firebase初期化 (設定が YOUR_API_KEY のままでもエラーで止まらないようにガード)
-        if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
-            try {
-                firebase.initializeApp(firebaseConfig);
-                const database = firebase.database();
-
-                // 【重要】合言葉のパスを基準にする
-                const dataRef = database.ref('shift_data/' + SECRET_PATH);
-
-                // Firebase データの監視
-                dataRef.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        if (data.members) names = data.members;
-                        overrides = data.overrides || {};
-                        renderMembers(); // サーバーのデータで上書き描画
-                    } else {
-                        // サーバーにデータがない場合は現在のローカル状態で初期化保存
-                        saveAllData();
-                    }
-                });
-
-                // データの保存（Firebaseへ）
-                window.saveAllData = function () {
-                    dataRef.set({
-                        members: names,
-                        overrides: overrides
-                    });
-                };
-            } catch (e) {
-                console.error("Firebaseの初期化に失敗しました。設定を確認してください。", e);
-            }
-        } else {
-            console.warn("Firebaseの設定が未完了です。現在はローカルモードで動作しています。");
-        }
-
-        // 設定の初期値 (画像の順番に合わせる: 西岡, 滝沢, 大竹, 臼井, 村田, 今枝)
+        // 設定の初期値
         const DEFAULT_NAMES = ["西岡", "滝沢", "大竹", "臼井", "村田", "今枝"];
         let names = [...DEFAULT_NAMES];
         let overrides = {};
@@ -140,6 +108,55 @@
 
         // 初回描画 (Firebaseからの返答を待たずに即座に表示)
         renderMembers();
+
+        if (isLocal) {
+            // --- ローカル開発モード (ブラウザのメモリに保存) ---
+            console.log("Local Mode: Saving data to browser localStorage.");
+
+            const localData = JSON.parse(localStorage.getItem('shift_data_local'));
+            if (localData) {
+                if (localData.members) names = localData.members;
+                overrides = localData.overrides || {};
+            }
+
+            window.saveAllData = function () {
+                localStorage.setItem('shift_data_local', JSON.stringify({
+                    members: names,
+                    overrides: overrides
+                }));
+            };
+        } else if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+            // --- 本番モード (GitHub Pages + Firebase) ---
+            try {
+                firebase.initializeApp(firebaseConfig);
+                const database = firebase.database();
+                const dataRef = database.ref('shift_data/' + SECRET_PATH);
+
+                dataRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        if (data.members) names = data.members;
+                        overrides = data.overrides || {};
+                        renderMembers();
+                    } else {
+                        saveAllData();
+                    }
+                });
+
+                window.saveAllData = function () {
+                    dataRef.set({
+                        members: names,
+                        overrides: overrides
+                    });
+                };
+            } catch (e) {
+                console.error("Firebaseの初期化に失敗しました。設定を確認してください。", e);
+            }
+        } else {
+            console.warn("Firebaseの設定が未完了です。");
+        }
+
+
 
         // ドラッグ&ドロップ関連
         let draggedElement = null;
