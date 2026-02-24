@@ -53,8 +53,18 @@
             <div class="add-member-form">
                 <input type="text" id="new-member-name" class="add-input" placeholder="新しい名前を入力...">
                 <button onclick="addMember()" class="btn-add">追加</button>
-                <button onclick="resetToDefaultOrder()" class="btn-reset"
-                    title="現在のメンバー管理の順番でシフトを自動計算し直します">自動計算に戻す</button>
+            </div>
+            <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
+                <button onclick="updateRotationOrder()" class="btn-confirm">
+                    <span style="font-size: 1.2em;">🔄</span>
+                    この順番を「自動計算ルール」として保存する
+                </button>
+                <div class="help-text">
+                    <strong>【自動計算の更新手順】</strong><br>
+                    1. 「メンバー管理」からメンバーを追加したり、ドラッグで順番を入れ替えます。<br>
+                    2. 上の青色のボタンをクリックすると、メンバー管理で並べた順番（左からの順番で）自動計算ルールが適用されます。<br>
+                    3. <strong>今週の月曜日</strong>を起点に設定した順で再スタートします。
+                </div>
             </div>
         </section>
 
@@ -90,43 +100,26 @@
         // -----------------------------------------------------------
 
         // --- セキュリティ・保存先設定 ---
-        const isLocal = window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.protocol === "file:";
-
         const SECRET_PATH = "shift-ontmi-7709-table-17493";
+
+        // 【固定】デフォルトの回転順序
+        const DEFAULT_ROTATION = ["滝沢", "臼井", "村田", "今枝", "大竹", "西岡"];
+        let rotationOrder = [...DEFAULT_ROTATION];
 
         // 設定の初期値
         const DEFAULT_NAMES = ["西岡", "滝沢", "大竹", "臼井", "村田", "今枝"];
         let names = [...DEFAULT_NAMES];
         let overrides = {};
 
-        // ローテーションの起点となる月曜日
-        // 2026-02-09 (今週の月曜) を起点にすることで、names[0] が今週の担当になります
-        const baseDate = new Date("2026-02-09");
+        // ローテーションの起点 (Firebaseから読み込むが、初期値として設定)
+        let baseDate = new Date("2026-03-30");
         const baseEarlyIndex = 0;
 
-        // 初回描画 (Firebaseからの返答を待たずに即座に表示)
+        // 初回描画
         renderMembers();
 
-        if (isLocal) {
-            // --- ローカル開発モード (ブラウザのメモリに保存) ---
-            console.log("Local Mode: Saving data to browser localStorage.");
-
-            const localData = JSON.parse(localStorage.getItem('shift_data_local'));
-            if (localData) {
-                if (localData.members) names = localData.members;
-                overrides = localData.overrides || {};
-            }
-
-            window.saveAllData = function () {
-                localStorage.setItem('shift_data_local', JSON.stringify({
-                    members: names,
-                    overrides: overrides
-                }));
-            };
-        } else if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
-            // --- 本番モード (GitHub Pages + Firebase) ---
+        // Firebase初期化
+        if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
             try {
                 firebase.initializeApp(firebaseConfig);
                 const database = firebase.database();
@@ -136,6 +129,8 @@
                     const data = snapshot.val();
                     if (data) {
                         if (data.members) names = data.members;
+                        if (data.rotation_order) rotationOrder = data.rotation_order;
+                        if (data.base_date) baseDate = new Date(data.base_date);
                         overrides = data.overrides || {};
                         renderMembers();
                     } else {
@@ -146,14 +141,32 @@
                 window.saveAllData = function () {
                     dataRef.set({
                         members: names,
+                        rotation_order: rotationOrder,
+                        base_date: baseDate.toISOString().split('T')[0],
                         overrides: overrides
                     });
                 };
             } catch (e) {
-                console.error("Firebaseの初期化に失敗しました。設定を確認してください。", e);
+                console.error("Firebaseの初期化に失敗しました。", e);
             }
         } else {
             console.warn("Firebaseの設定が未完了です。");
+        }
+
+        // 現在の「メンバー管理」の並び順を、今後の「自動回転順」として保存する
+        function updateRotationOrder() {
+            if (confirm("現在の「メンバー管理」の並び順を、今週からのシフト自動計算のループとして確定しますか？")) {
+                const today = new Date();
+                const monday = getMondayOfCurrentWeek(today);
+
+                // 起点を今週の月曜日に更新
+                baseDate = monday;
+                rotationOrder = [...names];
+
+                saveAllData();
+                alert("回転順を今週（" + baseDate.toLocaleDateString() + "の週）から確定しました。");
+                generateTable();
+            }
         }
 
 
@@ -240,19 +253,7 @@
             this.classList.remove('drag-over');
         }
 
-        // シフトを現在の「メンバー管理」の順番に基づいて自動計算し直す
-        function resetToDefaultOrder() {
-            if (confirm("手動で変更したシフトをすべてリセットし、現在の「メンバー管理」の順番で今週から自動計算し直しますか？")) {
-                const today = new Date();
-                const monday = getMondayOfCurrentWeek(today);
 
-                // 起点を今週の月曜日に更新することで、一番上の人が今週の担当になります
-                baseDate.setTime(monday.getTime());
-
-                overrides = {};
-                saveAllData();
-            }
-        }
 
         function addMember() {
             const input = document.getElementById('new-member-name');
@@ -385,13 +386,16 @@
                     displayWeekDate.setDate(displayWeekDate.getDate() + 1);
                 }
 
-                const earlyIdx = (baseEarlyIndex + diffWeeks + i) % names.length;
-                const lateIdx = (earlyIdx + 1) % names.length;
+                // --- 固定のローテーション順で計算 ---
+                const totalRotation = rotationOrder.length;
+                // 今週のインデックスを計算 (負の数にも対応できるよう +totalRotation)
+                const earlyIdx = (((baseEarlyIndex + diffWeeks + i) % totalRotation) + totalRotation) % totalRotation;
+                const lateIdx = (earlyIdx + 1) % totalRotation;
 
                 const rowData = overrides[weekId] || {
                     date: formatDate(displayWeekDate, i === 0) + " 〜",
-                    early: names[earlyIdx],
-                    late: (names.length > 1 ? names[lateIdx] : names[0]),
+                    early: rotationOrder[earlyIdx],
+                    late: rotationOrder[lateIdx],
                     normal: "すべて全員",
                     notes: ""
                 };
